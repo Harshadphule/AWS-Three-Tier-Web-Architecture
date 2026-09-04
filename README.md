@@ -1,1 +1,1 @@
-# AWS-3-Tier-Infrastructure-Project
+AWS-Three-Tier-Web-Architecture
