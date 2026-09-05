@@ -1,0 +1,108 @@
+# =========================================
+# COMMANDS TO RUN IN THE APPLICATION SERVER
+# =========================================
+
+# ======================================
+# CONNECT TO INSTANCE (SESSION MANAGER)
+# ======================================
+# EC2 Console -> Instances -> select instance -> Connect -> Session Manager tab -> Connect
+# You land as ssm-user by default. Switch to ec2-user:
+sudo -su ec2-user
+
+# ======================================
+# VERIFY OUTBOUND INTERNET VIA NAT GATEWAY
+# ======================================
+# App tier sits in a private subnet - confirm it can reach the internet
+# through the NAT Gateway before doing anything else.
+ping 8.8.8.8
+# Press Ctrl+C to stop
+# If this fails: check route tables / subnet associations -> NAT Gateway route missing.
+
+# ======================================
+# INSTALLING MYSQL IN AMAZON LINUX 2023
+# ======================================
+sudo wget https://dev.mysql.com/get/mysql80-community-release-el9-1.noarch.rpm
+sudo dnf install mysql80-community-release-el9-1.noarch.rpm -y
+sudo rpm --import https://repo.mysql.com/RPM-GPG-KEY-mysql-2023
+sudo dnf install mysql-community-client -y
+mysql --version
+
+# TO TEST CONNECTION BETWEEN APP-SERVER & DATABASE SERVER
+mysql -h <RDS-Endpoint> -u <username> -p
+# <Hit Enter & provide your password>
+# If this fails: check DB credentials and that DB-Tier-SG allows inbound 3306 from App-Tier-SG.
+
+# ===============================
+# CONFIGURE DATABASE
+# ===============================
+# Run the following inside the mysql> prompt after connecting above.
+
+# Create the application database:
+CREATE DATABASE webappdb;
+
+# Verify it was created:
+SHOW DATABASES;
+
+# Switch into the new database:
+USE webappdb;
+
+# Create the transactions table:
+CREATE TABLE IF NOT EXISTS transactions(
+  id INT NOT NULL AUTO_INCREMENT,
+  amount DECIMAL(10,2),
+  description VARCHAR(100),
+  PRIMARY KEY(id)
+);
+
+# Verify the table was created:
+SHOW TABLES;
+
+# Insert a test row:
+INSERT INTO transactions (amount,description) VALUES ('400','groceries');
+
+# Verify the data was inserted:
+SELECT * FROM transactions;
+
+# Exit the MySQL client:
+exit
+
+# ===============================
+# COPYING CONTENT FROM S3 BUCKET
+# ===============================
+cd /home/ec2-user
+# !!! IMP !!!
+# MODIFY BELOW CODE WITH YOUR S3 BUCKET NAME
+sudo aws s3 cp s3://<YOUR-S3-BUCKET-NAME>/application-code/app-tier app-tier --recursive
+cd app-tier
+sudo chown -R ec2-user:ec2-user /home/ec2-user/app-tier
+sudo chmod -R 755 /home/ec2-user/app-tier
+
+# ===============================
+# INSTALLING NODEJS
+# ===============================
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+source ~/.bashrc
+nvm install 16
+nvm use 16
+npm install -g pm2
+npm install
+npm audit fix
+
+# ===============================
+# UPDATE DB CONFIG IN APP CODE
+# ===============================
+# Before starting the app, make sure the app-tier code's DB config
+# (e.g. .env or config file) points to:
+#   DB Host: <RDS-Endpoint>
+#   DB Name: webappdb
+#   DB User / Password: <your credentials>
+
+# ===============================
+# STARTING INDEX.JS FILE
+# ===============================
+pm2 start index.js    # (Start Application with PM2, PM2 is process manager for NodeJS)
+pm2 logs              # (To see logs, run Ctrl+C to exit)
+pm2 startup           # (Set PM2 to Start on Boot)
+sudo env PATH=$PATH:/home/ec2-user/.nvm/versions/node/v16.20.2/bin /home/ec2-user/.nvm/versions/node/v16.20.2/lib/node_modules/pm2/bin/pm2 startup systemd -u ec2-user --hp /home/ec2-user
+pm2 save              # (Save the current configuration)
+curl http://localhost:4000/health   # (To do the health check)
